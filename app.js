@@ -6,11 +6,14 @@ class GraphQLProfileApp {
         this.token = localStorage.getItem('jwtToken');
         // Initialize user data structure
         this.userData = {
-            user: null,
-            transactions: [],
-            progress: [],
+            user: null, // Will store { id, login, auditRatio }
+            transactions: [], // For XP transactions list (e.g., for the table)
             skills: [],
-            audits: []
+            progress: [],
+            audits: [], // Original audits query (audits received on projects)
+            auditsDoneCount: 0, // Count of audits performed by the user
+            auditsReceivedCount: 0, // Count of audits received by the user (from transactions 'down')
+            totalXpAmount: 0 // Stores the sum of all XP transactions
         };
         // Store last fetched data for efficient chart resizing
         this.lastFetchedDataForResize = null;
@@ -38,7 +41,7 @@ class GraphQLProfileApp {
             clearTimeout(resizeTimeout);
             resizeTimeout = setTimeout(() => {
                 if (document.getElementById('profilePage').style.display !== 'none' && this.lastFetchedDataForResize) {
-                    this.generateCharts(true);
+                    this.generateCharts(true); // Pass true if resizing
                 }
             }, 250);
         });
@@ -57,7 +60,6 @@ class GraphQLProfileApp {
         document.getElementById('loadingSpinner').classList.remove('hidden');
         document.getElementById('mainContent').classList.add('hidden');
         this.loadProfileData();
-        // Note: Consider resetting form fields or error messages from previous login attempts here
     }
 
     async handleLogin(e) {
@@ -68,7 +70,6 @@ class GraphQLProfileApp {
         const loginInput = document.getElementById('loginInput').value;
         const password = document.getElementById('passwordInput').value;
 
-        // Update UI to indicate login attempt
         loginButton.textContent = 'Signing in...';
         loginButton.disabled = true;
         loginError.classList.add('hidden');
@@ -85,19 +86,16 @@ class GraphQLProfileApp {
 
             if (response.ok) {
                 const token = await response.text();
-                // Remove quotes from token if present
                 this.token = token.replace(/"/g, ''); 
                 localStorage.setItem('jwtToken', this.token);
                 this.showProfile();
             } else {
-                 // Attempt to parse error from response, fallback to generic message
                  const errorData = await response.json().catch(() => ({ message: "Invalid credentials or server error" }));
                 throw new Error(errorData.message || 'Invalid credentials');
             }
         } catch (error) {
             loginError.textContent = error.message || 'Invalid username/email or password. Please try again.';
             loginError.classList.remove('hidden');
-        // Ensure UI is reset regardless of login success or failure
         } finally {
             loginButton.textContent = 'Sign In';
             loginButton.disabled = false;
@@ -105,42 +103,45 @@ class GraphQLProfileApp {
     }
 
     handleLogout() {
-        // Clear authentication token and user data
         localStorage.removeItem('jwtToken');
         this.token = null;
-        this.userData = { user: null, transactions: [], progress: [], skills: [], audits: [] };
+        this.userData = { 
+            user: null, 
+            transactions: [], 
+            progress: [], 
+            skills: [], 
+            audits: [],
+            auditsDoneCount: 0,
+            auditsReceivedCount: 0,
+            totalXpAmount: 0
+        };
         this.lastFetchedDataForResize = null;
         this.showLogin();
         document.getElementById('loginForm').reset();
     }
 
-    // Asynchronously loads all necessary profile data
     async loadProfileData() {
         try {
-            await this.loadUserInfo();
-            await this.loadTransactions(); 
-            await this.loadProgress();
-            await this.loadAudits();
-            // Store a copy of the fetched data for chart resizing
-
+            await this.loadUserInfo(); // Fetches user info including auditRatio
+            await this.loadTransactions(); // Fetches XP, skills, audit counts, and total XP sum
+            await this.loadProgress(); // Fetches project progress
+            await this.loadAudits(); // Fetches detailed audits 
+            
             this.lastFetchedDataForResize = { ...this.userData };
 
             this.displayUserInfo();
             this.calculateStats();
             this.generateCharts();
             
-            // Hide spinner and show main content
             document.getElementById('loadingSpinner').classList.add('hidden');
             document.getElementById('mainContent').classList.remove('hidden');
         } catch (error) {
             console.error('Error loading profile data:', error);
-            // Display error message to the user
             const mainContent = document.getElementById('mainContent');
             mainContent.innerHTML = `<div class="text-center text-red-400 p-4 bg-red-900/30 rounded-lg">${error.message}. Try logging out and in.</div>`;
             mainContent.classList.remove('hidden');
             document.getElementById('loadingSpinner').classList.add('hidden');
 
-            // If unauthorized, log the user out
             if (error.message.includes('401') || error.message.includes('Unauthorized') || error.message.includes('Forbidden')) {
                 this.handleLogout();
             }
@@ -148,7 +149,6 @@ class GraphQLProfileApp {
     }
 
     async makeGraphQLQuery(query, variables = {}) {
-        // Check for authentication token before making a request
         if (!this.token) {
             throw new Error("Authentication token not found. Please login.");
         }
@@ -162,7 +162,6 @@ class GraphQLProfileApp {
         });
 
         if (!response.ok) {
-            // Attempt to parse error details from the response body
             const errorBody = await response.text();
             let errorMessage = `HTTP error! status: ${response.status}`;
             try {
@@ -175,7 +174,6 @@ class GraphQLProfileApp {
             } catch (e) {
                 errorMessage = `HTTP error! status: ${response.status}. Response: ${errorBody.substring(0,100)}`;
             }
-            // Specific handling for 401/403 errors
              if (response.status === 401 || response.status === 403) {
                 errorMessage = `Unauthorized or Forbidden: ${errorMessage}. Your session might have expired.`;
             }
@@ -184,30 +182,31 @@ class GraphQLProfileApp {
 
         const data = await response.json();
         if (data.errors) {
-            // Handle GraphQL-specific errors
             throw new Error(data.errors.map(e => e.message).join('; '));
         }
-        
         return data.data;
     }
-    // Fetches basic user information
 
     async loadUserInfo() {
         const query = `{
             user {
                 id
                 login
+                auditRatio 
             }
         }`;
         const data = await this.makeGraphQLQuery(query);
-        // Fallback to default values if user data is not found
-        this.userData.user = data.user && data.user.length > 0 ? data.user[0] : {id: 'N/A', login: 'N/A'};
+        this.userData.user = data.user && data.user.length > 0 
+            ? data.user[0] 
+            : {id: 'N/A', login: 'N/A', auditRatio: 0};
+        if (this.userData.user && typeof this.userData.user.auditRatio === 'undefined') {
+            this.userData.user.auditRatio = 0; 
+        }
     }
-    // Fetches transaction data (XP and skills)
 
     async loadTransactions() {
-        const query = `{
-            transaction(where: {type: {_eq: "xp"}}) {
+        const query = `query CombinedTransactionsAndAudits {
+            transaction(where: {type: {_eq: "xp"}}) { # For recent transactions table & XP by project chart
                 id
                 amount
                 createdAt
@@ -220,12 +219,31 @@ class GraphQLProfileApp {
                 type
                 amount
             }
+            auditsDoneCount: transaction_aggregate(where: {type: {_eq: "up"}}) {
+                aggregate {
+                    count
+                }
+            }
+            auditsReceivedCount: transaction_aggregate(where: {type: {_eq: "down"}}) {
+                aggregate {
+                    count
+                }
+            }
+            totalXpSum: transaction_aggregate(where: {type: {_eq: "xp"}}) { # Aggregate total XP
+                aggregate {
+                    sum {
+                        amount
+                    }
+                }
+            }
         }`;
         const data = await this.makeGraphQLQuery(query);
         this.userData.transactions = data.transaction || [];
         this.userData.skills = data.skills || [];
+        this.userData.auditsDoneCount = data.auditsDoneCount?.aggregate?.count || 0;
+        this.userData.auditsReceivedCount = data.auditsReceivedCount?.aggregate?.count || 0;
+        this.userData.totalXpAmount = data.totalXpSum?.aggregate?.sum?.amount || 0;
     }
-    // Fetches user progress data
 
     async loadProgress() {
         const query = `{
@@ -243,7 +261,6 @@ class GraphQLProfileApp {
         const data = await this.makeGraphQLQuery(query);
         this.userData.progress = data.progress || [];
     }
-    // Fetches user audit data
 
     async loadAudits() {
         const query = `{
@@ -264,44 +281,42 @@ class GraphQLProfileApp {
         this.userData.audits = data.audit || [];
     }
 
-    // Displays user information on the profile page
     displayUserInfo() {
         const user = this.userData.user;
-        document.getElementById('userId').textContent = user.id;
-        document.getElementById('userLogin').textContent = user.login;
+        document.getElementById('userId').textContent = user.id || 'N/A';
+        document.getElementById('userLogin').textContent = user.login || 'N/A';
     }
 
-    // Calculates and displays various statistics (total XP, audit stats)
+    formatXp(xp) {
+        if (xp >= 1000000) { // Megabytes
+            return (xp / 1000000).toFixed(1) + ' MB';
+        } else if (xp >= 1000) { // Kilobytes
+            return (xp / 1000).toFixed(1) + ' KB';
+        } else { // Bytes (raw XP)
+            return xp.toLocaleString() + ' XP';
+        }
+    }
+
     calculateStats() {
-        const totalXP = this.userData.transactions
-            .filter(t => !t.type || t.type === 'xp')
-            .reduce((sum, t) => sum + (t.amount || 0), 0);
-        document.getElementById('totalXP').textContent = totalXP.toLocaleString();
+        // Use the pre-aggregated total XP
+        const totalXP = this.userData.totalXpAmount;
+        document.getElementById('totalXP').textContent = this.formatXp(totalXP);
 
-        // Calculate audit stats
-        const audits = this.userData.audits || [];
-        const completedAudits = audits.filter(a => a.grade !== null && a.grade !== undefined).length;
-        const passedAudits = audits.filter(a => a.grade >= 1).length;
-        const failedAudits = audits.filter(a => a.grade !== null && a.grade !== undefined && a.grade < 1).length;
-        const averageGrade = completedAudits > 0 ? 
-            (audits.filter(a => a.grade !== null).reduce((sum, a) => sum + a.grade, 0) / completedAudits * 100).toFixed(1) : 0;
-
-        document.getElementById('completedProjects').textContent = completedAudits;
-        document.getElementById('failedProjects').textContent = passedAudits;
-        document.getElementById('successRate').textContent = `${averageGrade}%`;
+        
+        const auditRatio = this.userData.user?.auditRatio || 0;
+        document.getElementById('auditRatioDisplay').textContent = parseFloat(auditRatio).toFixed(1);
 
         this.populateProjectsTable();
     }
 
-    // Populates the recent projects table with XP transaction data
     populateProjectsTable() {
         const tableBody = document.getElementById('projectsTable');
-        const recentXPTransactions = this.userData.transactions
-            .filter(t => !t.type || t.type === 'xp')
+        // Uses the 'transactions' list which contains individual XP transactions
+        const recentXPTransactions = this.userData.transactions 
+            .filter(t => (!t.type || t.type === 'xp') && typeof t.amount === 'number') 
             .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
             .slice(0, 10);
 
-        // Display a message if no transactions are found
         if (recentXPTransactions.length === 0) {
             tableBody.innerHTML = `<tr><td colspan="3" class="py-3 px-4 text-center text-gray-400">No XP transactions found.</td></tr>`;
             return;
@@ -309,49 +324,45 @@ class GraphQLProfileApp {
         
         tableBody.innerHTML = recentXPTransactions.map(transaction => {
             const date = new Date(transaction.createdAt).toLocaleDateString();
-            // Extract project name from path or use object name
             const taskName = this.getProjectNameFromPath(transaction.path) || (transaction.object ? transaction.object.name : 'Unknown Task');
             
             return `
                 <tr class="hover:bg-white/5 transition-colors">
                     <td class="py-3 px-4 text-white">${taskName}</td>
-                    <td class="py-3 px-4 text-purple-300">${(transaction.amount).toLocaleString()}</td>
+                    <td class="py-3 px-4 text-purple-300">${(transaction.amount || 0).toLocaleString()}</td>
                     <td class="py-3 px-4 text-gray-300">${date}</td>
                 </tr>
             `;
         }).join('');
     }
     
-    // Helper function to extract and format project name from a path string
     getProjectNameFromPath(path) {
         if (!path) return "Unknown Project";
         const parts = path.split('/');
-        // Attempt to get the last part of the path as project name
         let projectName = parts[parts.length - 1] || "Unnamed Project";
-        // If the last part is numeric or empty, try the second to last part
         if ((projectName === "" || projectName.match(/^\d+$/)) && parts.length > 1) { 
             projectName = parts[parts.length - 2] || "Unnamed Project";
         }
-        // Clean up common prefixes and capitalize words
         projectName = projectName.replace(/^piscine-/, '').replace(/^quest-/, '');
         return projectName.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
     }
 
-    // Generates or regenerates charts. Uses last fetched data if resizing.
     generateCharts(isResize = false) {
         const dataToUse = isResize && this.lastFetchedDataForResize ? this.lastFetchedDataForResize : this.userData;
-        this.renderXPByProjectChart(document.getElementById('xpByProjectChart'), dataToUse.transactions || []);
-        this.renderSkillsChart(document.getElementById('skillsChart'), dataToUse.skills || []);
+        if (dataToUse) {
+            // XP by project chart still uses the list of transactions
+            this.renderXPByProjectChart(document.getElementById('xpByProjectChart'), dataToUse.transactions || []);
+            this.renderSkillsChart(document.getElementById('skillsChart'), dataToUse.skills || []);
+        }
     }
 
-    // Renders the XP by Project bar chart using SVG
     renderXPByProjectChart(svgElement, xpTransactions) {
+        if (!svgElement) return;
         const projectXP = {};
-        // Filter for XP transactions only
-        const filteredXpTransactions = xpTransactions.filter(tx => !tx.type || tx.type === 'xp');
+        // Filter for actual XP transactions with a valid amount for the chart
+        const filteredXpTransactions = xpTransactions.filter(tx => (!tx.type || tx.type === 'xp') && typeof tx.amount === 'number' && tx.amount > 0);
 
         filteredXpTransactions.forEach(tx => {
-            // Aggregate XP by project name
             const projectName = this.getProjectNameFromPath(tx.path);
             projectXP[projectName] = (projectXP[projectName] || 0) + tx.amount;
         });
@@ -359,14 +370,12 @@ class GraphQLProfileApp {
         const projects = Object.entries(projectXP);
         if (projects.length === 0) {
             svgElement.innerHTML = `<text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#A0AEC0" font-size="14px">No project XP data available</text>`;
-            // Early return if no data
             return;
         }
 
         projects.sort((a, b) => b[1] - a[1]);
         const topProjects = projects.slice(0, 10);
 
-        // Clear previous chart content
         svgElement.innerHTML = '';
 
         const svgWidth = svgElement.clientWidth || 500;
@@ -375,15 +384,13 @@ class GraphQLProfileApp {
         const chartWidth = svgWidth - margin.left - margin.right;
         const chartHeight = svgHeight - margin.top - margin.bottom;
 
-        // Check if chart dimensions are valid
         if (chartWidth <=0 || chartHeight <=0) {
             svgElement.innerHTML = `<text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#A0AEC0" font-size="14px">Chart cannot be rendered (too small).</text>`;
             return;
         }
 
-        // Determine max XP for scaling
         const maxXP = Math.max(...topProjects.map(p => p[1]), 0);
-        if (maxXP === 0 && topProjects.length > 0) {
+         if (maxXP === 0 && topProjects.length > 0) { // Should not happen due to filter tx.amount > 0
             svgElement.innerHTML = `<text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#A0AEC0" font-size="14px">All projects have 0 XP</text>`;
             return;
         }
@@ -392,7 +399,6 @@ class GraphQLProfileApp {
         const barWidth = chartWidth / topProjects.length * (1 - barPadding);
         const scaleY = val => chartHeight - (val / (maxXP || 1)) * chartHeight;
 
-        // Render X-axis labels (project names)
         topProjects.forEach((project, i) => {
             const x = margin.left + i * (chartWidth / topProjects.length) + (chartWidth / topProjects.length * barPadding / 2) + barWidth / 2;
             const textEl = document.createElementNS("http://www.w3.org/2000/svg", "text");
@@ -402,7 +408,6 @@ class GraphQLProfileApp {
             textEl.setAttribute("transform", `rotate(-55 ${x} ${svgHeight - margin.bottom + 25})`);
             textEl.setAttribute("font-size", "10px");
             textEl.setAttribute("fill", "#CBD5E0");
-            // Truncate long project names
             let projectNameText = project[0];
             if (projectNameText.length > 15) projectNameText = projectNameText.substring(0, 12) + "...";
             textEl.textContent = projectNameText;
@@ -413,7 +418,6 @@ class GraphQLProfileApp {
         yAxisGroup.setAttribute("transform", `translate(${margin.left}, ${margin.top})`);
         svgElement.appendChild(yAxisGroup);
 
-        // Render Y-axis grid lines and labels
         const numTicks = 5;
         for (let i = 0; i <= numTicks; i++) {
             const val = Math.round((maxXP / numTicks) * i);
@@ -432,7 +436,6 @@ class GraphQLProfileApp {
             yAxisGroup.appendChild(textEl);
         }
 
-        // Render Y-axis title
         const yAxisTitle = document.createElementNS("http://www.w3.org/2000/svg", "text");
         yAxisTitle.setAttribute("transform", "rotate(-90)");
         yAxisTitle.setAttribute("y", margin.left / 2 - 35);
@@ -442,7 +445,6 @@ class GraphQLProfileApp {
         yAxisTitle.textContent = "XP Amount";
         svgElement.appendChild(yAxisTitle);
 
-        // Render chart bars
         topProjects.forEach((project, i) => {
             const x = margin.left + i * (chartWidth / topProjects.length) + (chartWidth / topProjects.length * barPadding / 2);
             const y = margin.top + scaleY(project[1]);
@@ -456,13 +458,11 @@ class GraphQLProfileApp {
             rect.setAttribute("rx", "3"); rect.setAttribute("ry", "3");
             rect.classList.add("chart-bar");
 
-            // Add tooltip for each bar
             const titleEl = document.createElementNS("http://www.w3.org/2000/svg", "title");
             titleEl.textContent = `${project[0]}: ${project[1].toLocaleString()} XP`;
             rect.appendChild(titleEl);
             svgElement.appendChild(rect);
 
-            // Add value label on top of the bar if space permits
             if (h > 15) {
                 const valueText = document.createElementNS("http://www.w3.org/2000/svg", "text");
                 valueText.setAttribute("x", x + w / 2); valueText.setAttribute("y", y - 7);
@@ -473,7 +473,6 @@ class GraphQLProfileApp {
             }
         });
 
-        // Define gradient for bar fill
         const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
         const linearGradient = document.createElementNS("http://www.w3.org/2000/svg", "linearGradient");
         linearGradient.setAttribute("id", "barGradient");
@@ -491,32 +490,31 @@ class GraphQLProfileApp {
         svgElement.appendChild(defs);
     }
 
-    // Renders the Skills bar chart using SVG
     renderSkillsChart(svgElement, skillsData) {
-        // Check if skills data is valid and not empty
+        if (!svgElement) return;
         if (!Array.isArray(skillsData) || skillsData.length === 0) {
             svgElement.innerHTML = `<text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#A0AEC0" font-size="14px">No skills data available.</text>`;
             return;
         }
 
-        // Aggregate skills by type, taking the maximum value for each skill
         const skillsMap = {};
         skillsData.forEach(skill => {
-            // Normalize skill type name
             const skillType = skill.type.replace(/^skill_/, '');
             if (!skillsMap[skillType] || skillsMap[skillType] < skill.amount) {
                 skillsMap[skillType] = skill.amount;
             }
         });
 
-        // Convert to array and sort by amount
         const aggregatedSkills = Object.entries(skillsMap)
             .map(([type, amount]) => ({ type: `skill_${type}`, amount }))
             .sort((a, b) => b.amount - a.amount);
 
         const topSkills = aggregatedSkills.slice(0, 10);
+        if (topSkills.length === 0) { 
+             svgElement.innerHTML = `<text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#A0AEC0" font-size="14px">No skill data to display.</text>`;
+            return;
+        }
 
-        // Clear previous chart content
         svgElement.innerHTML = '';
 
         const svgWidth = svgElement.clientWidth || 500;
@@ -525,13 +523,11 @@ class GraphQLProfileApp {
         const chartWidth = svgWidth - margin.left - margin.right;
         const chartHeight = svgHeight - margin.top - margin.bottom;
         
-        // Check if chart dimensions are valid
         if (chartWidth <= 0 || chartHeight <= 0) {
             svgElement.innerHTML = `<text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#A0AEC0" font-size="14px">Chart cannot be rendered (too small).</text>`;
             return;
         }
 
-        // Determine max skill amount for scaling
         const maxAmount = Math.max(...topSkills.map(s => s.amount), 0);
         if (maxAmount === 0 && topSkills.length > 0) {
             svgElement.innerHTML = `<text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#A0AEC0" font-size="14px">All skills have 0% progress.</text>`;
@@ -541,7 +537,6 @@ class GraphQLProfileApp {
         const barPadding = 0.3;
         const barWidth = chartWidth / topSkills.length * (1 - barPadding);
         const scaleY = val => (val / (maxAmount || 1)) * chartHeight;
-        // Group for chart elements, translated by margin
 
         const chartGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
         chartGroup.setAttribute("transform", `translate(${margin.left}, ${margin.top})`);
@@ -552,7 +547,6 @@ class GraphQLProfileApp {
             const barHeight = scaleY(skill.amount);
             const y = chartHeight - barHeight;
 
-            // Skill name label
             const textEl = document.createElementNS("http://www.w3.org/2000/svg", "text");
             textEl.setAttribute("x", x + barWidth / 2);
             textEl.setAttribute("y", chartHeight + 25);
@@ -560,18 +554,14 @@ class GraphQLProfileApp {
             textEl.setAttribute("transform", `rotate(-45 ${x + barWidth/2} ${chartHeight + 25})`);
             textEl.setAttribute("font-size", "11px");
             textEl.setAttribute("fill", "#CBD5E0");
-            // Format skill name for display
             let skillName = skill.type.replace(/^skill_/, '').replace(/_/g, ' ').replace(/-/g, ' ');
-            // Capitalize each word
             skillName = skillName.split(' ').map(word => 
                 word.charAt(0).toUpperCase() + word.slice(1)
             ).join(' ');
-            // Truncate long skill names
             if (skillName.length > 12) skillName = skillName.substring(0, 9) + "...";
             textEl.textContent = skillName;
             chartGroup.appendChild(textEl);
 
-            // Skill bar
             const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
             rect.setAttribute("x", x);
             rect.setAttribute("y", y);
@@ -582,14 +572,11 @@ class GraphQLProfileApp {
             rect.setAttribute("ry", "3");
             rect.classList.add("chart-bar");
 
-            // Add tooltip for each bar
             const titleEl = document.createElementNS("http://www.w3.org/2000/svg", "title");
             titleEl.textContent = `${skillName}: ${skill.amount}%`;
             rect.appendChild(titleEl);
             chartGroup.appendChild(rect);
 
-            // Value label on top of bar
-            // Add value label on top of the bar if space permits
             if (barHeight > 15) {
                 const valueText = document.createElementNS("http://www.w3.org/2000/svg", "text");
                 valueText.setAttribute("x", x + barWidth / 2);
@@ -603,17 +590,14 @@ class GraphQLProfileApp {
             }
         });
 
-        // Y-axis grid lines and labels
         const yAxisGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
         chartGroup.appendChild(yAxisGroup);
 
-        // Render Y-axis grid lines and labels
         const numYTicks = 5;
         for (let i = 0; i <= numYTicks; i++) {
             const val = Math.round((maxAmount / numYTicks) * i);
             const yPos = chartHeight - scaleY(val);
             
-            // Grid line
             const gridLine = document.createElementNS("http://www.w3.org/2000/svg", "line");
             gridLine.setAttribute("x1", 0); 
             gridLine.setAttribute("y1", yPos);
@@ -623,7 +607,6 @@ class GraphQLProfileApp {
             gridLine.setAttribute("stroke-dasharray", "2,2");
             yAxisGroup.appendChild(gridLine);
             
-            // Y-axis label
             const tickText = document.createElementNS("http://www.w3.org/2000/svg", "text");
             tickText.setAttribute("x", -10); 
             tickText.setAttribute("y", yPos + 4);
@@ -634,11 +617,10 @@ class GraphQLProfileApp {
             yAxisGroup.appendChild(tickText);
         }
 
-        // Y-axis title
         const yAxisTitle = document.createElementNS("http://www.w3.org/2000/svg", "text");
         yAxisTitle.setAttribute("transform", "rotate(-90)");
-        yAxisTitle.setAttribute("x", -(chartHeight / 2) - margin.top);
-        yAxisTitle.setAttribute("y", -margin.left + 20);
+        yAxisTitle.setAttribute("x", -(chartHeight / 2)); 
+        yAxisTitle.setAttribute("y", -margin.left + 20); 
         yAxisTitle.setAttribute("text-anchor", "middle");
         yAxisTitle.setAttribute("font-size", "12px");
         yAxisTitle.setAttribute("font-weight", "600");
@@ -646,7 +628,6 @@ class GraphQLProfileApp {
         yAxisTitle.textContent = "Skill Level (%)";
         chartGroup.appendChild(yAxisTitle);
 
-        // Define gradient for bar fill
         const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
         const skillGradient = document.createElementNS("http://www.w3.org/2000/svg", "linearGradient");
         skillGradient.setAttribute("id", "skillBarGradient");
