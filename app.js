@@ -1,8 +1,10 @@
+// Main class for the GraphQL Profile Application
 class GraphQLProfileApp {
     constructor() {
         this.apiUrl = 'https://learn.zone01kisumu.ke/api/graphql-engine/v1/graphql';
         this.authUrl = 'https://learn.zone01kisumu.ke/api/auth/signin';
         this.token = localStorage.getItem('jwtToken');
+        // Initialize user data structure
         this.userData = {
             user: null,
             transactions: [],
@@ -10,10 +12,12 @@ class GraphQLProfileApp {
             skills: [],
             audits: []
         };
+        // Store last fetched data for efficient chart resizing
         this.lastFetchedDataForResize = null;
         this.init();
     }
 
+    // Initializes the application, binds events, and checks authentication status
     init() {
         this.bindEvents();
         if (this.token) {
@@ -23,11 +27,13 @@ class GraphQLProfileApp {
         }
     }
 
+    // Binds DOM event listeners
     bindEvents() {
         document.getElementById('loginForm').addEventListener('submit', (e) => this.handleLogin(e));
         document.getElementById('logoutButton').addEventListener('click', () => this.handleLogout());
         
         let resizeTimeout;
+        // Debounced resize event listener for regenerating charts
         window.addEventListener('resize', () => {
             clearTimeout(resizeTimeout);
             resizeTimeout = setTimeout(() => {
@@ -38,17 +44,20 @@ class GraphQLProfileApp {
         });
     }
 
+    // Shows the login page and hides the profile page
     showLogin() {
         document.getElementById('loginPage').classList.remove('hidden');
         document.getElementById('profilePage').classList.add('hidden');
     }
 
+    // Shows the profile page, hides the login page, and initiates profile data loading
     showProfile() {
         document.getElementById('loginPage').classList.add('hidden');
         document.getElementById('profilePage').classList.remove('hidden');
         document.getElementById('loadingSpinner').classList.remove('hidden');
         document.getElementById('mainContent').classList.add('hidden');
         this.loadProfileData();
+        // Note: Consider resetting form fields or error messages from previous login attempts here
     }
 
     async handleLogin(e) {
@@ -59,6 +68,7 @@ class GraphQLProfileApp {
         const loginInput = document.getElementById('loginInput').value;
         const password = document.getElementById('passwordInput').value;
 
+        // Update UI to indicate login attempt
         loginButton.textContent = 'Signing in...';
         loginButton.disabled = true;
         loginError.classList.add('hidden');
@@ -75,16 +85,19 @@ class GraphQLProfileApp {
 
             if (response.ok) {
                 const token = await response.text();
+                // Remove quotes from token if present
                 this.token = token.replace(/"/g, ''); 
                 localStorage.setItem('jwtToken', this.token);
                 this.showProfile();
             } else {
+                 // Attempt to parse error from response, fallback to generic message
                  const errorData = await response.json().catch(() => ({ message: "Invalid credentials or server error" }));
                 throw new Error(errorData.message || 'Invalid credentials');
             }
         } catch (error) {
             loginError.textContent = error.message || 'Invalid username/email or password. Please try again.';
             loginError.classList.remove('hidden');
+        // Ensure UI is reset regardless of login success or failure
         } finally {
             loginButton.textContent = 'Sign In';
             loginButton.disabled = false;
@@ -92,6 +105,7 @@ class GraphQLProfileApp {
     }
 
     handleLogout() {
+        // Clear authentication token and user data
         localStorage.removeItem('jwtToken');
         this.token = null;
         this.userData = { user: null, transactions: [], progress: [], skills: [], audits: [] };
@@ -100,12 +114,14 @@ class GraphQLProfileApp {
         document.getElementById('loginForm').reset();
     }
 
+    // Asynchronously loads all necessary profile data
     async loadProfileData() {
         try {
             await this.loadUserInfo();
             await this.loadTransactions(); 
             await this.loadProgress();
             await this.loadAudits();
+            // Store a copy of the fetched data for chart resizing
 
             this.lastFetchedDataForResize = { ...this.userData };
 
@@ -113,15 +129,18 @@ class GraphQLProfileApp {
             this.calculateStats();
             this.generateCharts();
             
+            // Hide spinner and show main content
             document.getElementById('loadingSpinner').classList.add('hidden');
             document.getElementById('mainContent').classList.remove('hidden');
         } catch (error) {
             console.error('Error loading profile data:', error);
+            // Display error message to the user
             const mainContent = document.getElementById('mainContent');
             mainContent.innerHTML = `<div class="text-center text-red-400 p-4 bg-red-900/30 rounded-lg">${error.message}. Try logging out and in.</div>`;
             mainContent.classList.remove('hidden');
             document.getElementById('loadingSpinner').classList.add('hidden');
 
+            // If unauthorized, log the user out
             if (error.message.includes('401') || error.message.includes('Unauthorized') || error.message.includes('Forbidden')) {
                 this.handleLogout();
             }
@@ -129,6 +148,7 @@ class GraphQLProfileApp {
     }
 
     async makeGraphQLQuery(query, variables = {}) {
+        // Check for authentication token before making a request
         if (!this.token) {
             throw new Error("Authentication token not found. Please login.");
         }
@@ -142,6 +162,7 @@ class GraphQLProfileApp {
         });
 
         if (!response.ok) {
+            // Attempt to parse error details from the response body
             const errorBody = await response.text();
             let errorMessage = `HTTP error! status: ${response.status}`;
             try {
@@ -154,6 +175,7 @@ class GraphQLProfileApp {
             } catch (e) {
                 errorMessage = `HTTP error! status: ${response.status}. Response: ${errorBody.substring(0,100)}`;
             }
+            // Specific handling for 401/403 errors
              if (response.status === 401 || response.status === 403) {
                 errorMessage = `Unauthorized or Forbidden: ${errorMessage}. Your session might have expired.`;
             }
@@ -162,11 +184,13 @@ class GraphQLProfileApp {
 
         const data = await response.json();
         if (data.errors) {
+            // Handle GraphQL-specific errors
             throw new Error(data.errors.map(e => e.message).join('; '));
         }
         
         return data.data;
     }
+    // Fetches basic user information
 
     async loadUserInfo() {
         const query = `{
@@ -176,8 +200,10 @@ class GraphQLProfileApp {
             }
         }`;
         const data = await this.makeGraphQLQuery(query);
+        // Fallback to default values if user data is not found
         this.userData.user = data.user && data.user.length > 0 ? data.user[0] : {id: 'N/A', login: 'N/A'};
     }
+    // Fetches transaction data (XP and skills)
 
     async loadTransactions() {
         const query = `{
@@ -199,6 +225,7 @@ class GraphQLProfileApp {
         this.userData.transactions = data.transaction || [];
         this.userData.skills = data.skills || [];
     }
+    // Fetches user progress data
 
     async loadProgress() {
         const query = `{
@@ -216,6 +243,7 @@ class GraphQLProfileApp {
         const data = await this.makeGraphQLQuery(query);
         this.userData.progress = data.progress || [];
     }
+    // Fetches user audit data
 
     async loadAudits() {
         const query = `{
@@ -236,12 +264,14 @@ class GraphQLProfileApp {
         this.userData.audits = data.audit || [];
     }
 
+    // Displays user information on the profile page
     displayUserInfo() {
         const user = this.userData.user;
         document.getElementById('userId').textContent = user.id;
         document.getElementById('userLogin').textContent = user.login;
     }
 
+    // Calculates and displays various statistics (total XP, audit stats)
     calculateStats() {
         const totalXP = this.userData.transactions
             .filter(t => !t.type || t.type === 'xp')
@@ -263,6 +293,7 @@ class GraphQLProfileApp {
         this.populateProjectsTable();
     }
 
+    // Populates the recent projects table with XP transaction data
     populateProjectsTable() {
         const tableBody = document.getElementById('projectsTable');
         const recentXPTransactions = this.userData.transactions
@@ -270,6 +301,7 @@ class GraphQLProfileApp {
             .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
             .slice(0, 10);
 
+        // Display a message if no transactions are found
         if (recentXPTransactions.length === 0) {
             tableBody.innerHTML = `<tr><td colspan="3" class="py-3 px-4 text-center text-gray-400">No XP transactions found.</td></tr>`;
             return;
@@ -277,6 +309,7 @@ class GraphQLProfileApp {
         
         tableBody.innerHTML = recentXPTransactions.map(transaction => {
             const date = new Date(transaction.createdAt).toLocaleDateString();
+            // Extract project name from path or use object name
             const taskName = this.getProjectNameFromPath(transaction.path) || (transaction.object ? transaction.object.name : 'Unknown Task');
             
             return `
@@ -289,28 +322,36 @@ class GraphQLProfileApp {
         }).join('');
     }
     
+    // Helper function to extract and format project name from a path string
     getProjectNameFromPath(path) {
         if (!path) return "Unknown Project";
         const parts = path.split('/');
+        // Attempt to get the last part of the path as project name
         let projectName = parts[parts.length - 1] || "Unnamed Project";
+        // If the last part is numeric or empty, try the second to last part
         if ((projectName === "" || projectName.match(/^\d+$/)) && parts.length > 1) { 
             projectName = parts[parts.length - 2] || "Unnamed Project";
         }
+        // Clean up common prefixes and capitalize words
         projectName = projectName.replace(/^piscine-/, '').replace(/^quest-/, '');
         return projectName.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
     }
 
+    // Generates or regenerates charts. Uses last fetched data if resizing.
     generateCharts(isResize = false) {
         const dataToUse = isResize && this.lastFetchedDataForResize ? this.lastFetchedDataForResize : this.userData;
         this.renderXPByProjectChart(document.getElementById('xpByProjectChart'), dataToUse.transactions || []);
         this.renderSkillsChart(document.getElementById('skillsChart'), dataToUse.skills || []);
     }
 
+    // Renders the XP by Project bar chart using SVG
     renderXPByProjectChart(svgElement, xpTransactions) {
         const projectXP = {};
+        // Filter for XP transactions only
         const filteredXpTransactions = xpTransactions.filter(tx => !tx.type || tx.type === 'xp');
 
         filteredXpTransactions.forEach(tx => {
+            // Aggregate XP by project name
             const projectName = this.getProjectNameFromPath(tx.path);
             projectXP[projectName] = (projectXP[projectName] || 0) + tx.amount;
         });
@@ -318,12 +359,14 @@ class GraphQLProfileApp {
         const projects = Object.entries(projectXP);
         if (projects.length === 0) {
             svgElement.innerHTML = `<text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#A0AEC0" font-size="14px">No project XP data available</text>`;
+            // Early return if no data
             return;
         }
 
         projects.sort((a, b) => b[1] - a[1]);
         const topProjects = projects.slice(0, 10);
 
+        // Clear previous chart content
         svgElement.innerHTML = '';
 
         const svgWidth = svgElement.clientWidth || 500;
@@ -332,11 +375,13 @@ class GraphQLProfileApp {
         const chartWidth = svgWidth - margin.left - margin.right;
         const chartHeight = svgHeight - margin.top - margin.bottom;
 
+        // Check if chart dimensions are valid
         if (chartWidth <=0 || chartHeight <=0) {
             svgElement.innerHTML = `<text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#A0AEC0" font-size="14px">Chart cannot be rendered (too small).</text>`;
             return;
         }
 
+        // Determine max XP for scaling
         const maxXP = Math.max(...topProjects.map(p => p[1]), 0);
         if (maxXP === 0 && topProjects.length > 0) {
             svgElement.innerHTML = `<text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#A0AEC0" font-size="14px">All projects have 0 XP</text>`;
@@ -347,6 +392,7 @@ class GraphQLProfileApp {
         const barWidth = chartWidth / topProjects.length * (1 - barPadding);
         const scaleY = val => chartHeight - (val / (maxXP || 1)) * chartHeight;
 
+        // Render X-axis labels (project names)
         topProjects.forEach((project, i) => {
             const x = margin.left + i * (chartWidth / topProjects.length) + (chartWidth / topProjects.length * barPadding / 2) + barWidth / 2;
             const textEl = document.createElementNS("http://www.w3.org/2000/svg", "text");
@@ -356,6 +402,7 @@ class GraphQLProfileApp {
             textEl.setAttribute("transform", `rotate(-55 ${x} ${svgHeight - margin.bottom + 25})`);
             textEl.setAttribute("font-size", "10px");
             textEl.setAttribute("fill", "#CBD5E0");
+            // Truncate long project names
             let projectNameText = project[0];
             if (projectNameText.length > 15) projectNameText = projectNameText.substring(0, 12) + "...";
             textEl.textContent = projectNameText;
@@ -366,6 +413,7 @@ class GraphQLProfileApp {
         yAxisGroup.setAttribute("transform", `translate(${margin.left}, ${margin.top})`);
         svgElement.appendChild(yAxisGroup);
 
+        // Render Y-axis grid lines and labels
         const numTicks = 5;
         for (let i = 0; i <= numTicks; i++) {
             const val = Math.round((maxXP / numTicks) * i);
@@ -384,6 +432,7 @@ class GraphQLProfileApp {
             yAxisGroup.appendChild(textEl);
         }
 
+        // Render Y-axis title
         const yAxisTitle = document.createElementNS("http://www.w3.org/2000/svg", "text");
         yAxisTitle.setAttribute("transform", "rotate(-90)");
         yAxisTitle.setAttribute("y", margin.left / 2 - 35);
@@ -393,6 +442,7 @@ class GraphQLProfileApp {
         yAxisTitle.textContent = "XP Amount";
         svgElement.appendChild(yAxisTitle);
 
+        // Render chart bars
         topProjects.forEach((project, i) => {
             const x = margin.left + i * (chartWidth / topProjects.length) + (chartWidth / topProjects.length * barPadding / 2);
             const y = margin.top + scaleY(project[1]);
@@ -406,11 +456,13 @@ class GraphQLProfileApp {
             rect.setAttribute("rx", "3"); rect.setAttribute("ry", "3");
             rect.classList.add("chart-bar");
 
+            // Add tooltip for each bar
             const titleEl = document.createElementNS("http://www.w3.org/2000/svg", "title");
             titleEl.textContent = `${project[0]}: ${project[1].toLocaleString()} XP`;
             rect.appendChild(titleEl);
             svgElement.appendChild(rect);
 
+            // Add value label on top of the bar if space permits
             if (h > 15) {
                 const valueText = document.createElementNS("http://www.w3.org/2000/svg", "text");
                 valueText.setAttribute("x", x + w / 2); valueText.setAttribute("y", y - 7);
@@ -421,6 +473,7 @@ class GraphQLProfileApp {
             }
         });
 
+        // Define gradient for bar fill
         const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
         const linearGradient = document.createElementNS("http://www.w3.org/2000/svg", "linearGradient");
         linearGradient.setAttribute("id", "barGradient");
@@ -438,7 +491,9 @@ class GraphQLProfileApp {
         svgElement.appendChild(defs);
     }
 
+    // Renders the Skills bar chart using SVG
     renderSkillsChart(svgElement, skillsData) {
+        // Check if skills data is valid and not empty
         if (!Array.isArray(skillsData) || skillsData.length === 0) {
             svgElement.innerHTML = `<text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#A0AEC0" font-size="14px">No skills data available.</text>`;
             return;
@@ -447,6 +502,7 @@ class GraphQLProfileApp {
         // Aggregate skills by type, taking the maximum value for each skill
         const skillsMap = {};
         skillsData.forEach(skill => {
+            // Normalize skill type name
             const skillType = skill.type.replace(/^skill_/, '');
             if (!skillsMap[skillType] || skillsMap[skillType] < skill.amount) {
                 skillsMap[skillType] = skill.amount;
@@ -460,6 +516,7 @@ class GraphQLProfileApp {
 
         const topSkills = aggregatedSkills.slice(0, 10);
 
+        // Clear previous chart content
         svgElement.innerHTML = '';
 
         const svgWidth = svgElement.clientWidth || 500;
@@ -468,11 +525,13 @@ class GraphQLProfileApp {
         const chartWidth = svgWidth - margin.left - margin.right;
         const chartHeight = svgHeight - margin.top - margin.bottom;
         
+        // Check if chart dimensions are valid
         if (chartWidth <= 0 || chartHeight <= 0) {
             svgElement.innerHTML = `<text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#A0AEC0" font-size="14px">Chart cannot be rendered (too small).</text>`;
             return;
         }
 
+        // Determine max skill amount for scaling
         const maxAmount = Math.max(...topSkills.map(s => s.amount), 0);
         if (maxAmount === 0 && topSkills.length > 0) {
             svgElement.innerHTML = `<text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#A0AEC0" font-size="14px">All skills have 0% progress.</text>`;
@@ -482,6 +541,7 @@ class GraphQLProfileApp {
         const barPadding = 0.3;
         const barWidth = chartWidth / topSkills.length * (1 - barPadding);
         const scaleY = val => (val / (maxAmount || 1)) * chartHeight;
+        // Group for chart elements, translated by margin
 
         const chartGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
         chartGroup.setAttribute("transform", `translate(${margin.left}, ${margin.top})`);
@@ -500,13 +560,13 @@ class GraphQLProfileApp {
             textEl.setAttribute("transform", `rotate(-45 ${x + barWidth/2} ${chartHeight + 25})`);
             textEl.setAttribute("font-size", "11px");
             textEl.setAttribute("fill", "#CBD5E0");
-            
+            // Format skill name for display
             let skillName = skill.type.replace(/^skill_/, '').replace(/_/g, ' ').replace(/-/g, ' ');
             // Capitalize each word
             skillName = skillName.split(' ').map(word => 
                 word.charAt(0).toUpperCase() + word.slice(1)
             ).join(' ');
-            
+            // Truncate long skill names
             if (skillName.length > 12) skillName = skillName.substring(0, 9) + "...";
             textEl.textContent = skillName;
             chartGroup.appendChild(textEl);
@@ -522,12 +582,14 @@ class GraphQLProfileApp {
             rect.setAttribute("ry", "3");
             rect.classList.add("chart-bar");
 
+            // Add tooltip for each bar
             const titleEl = document.createElementNS("http://www.w3.org/2000/svg", "title");
             titleEl.textContent = `${skillName}: ${skill.amount}%`;
             rect.appendChild(titleEl);
             chartGroup.appendChild(rect);
 
             // Value label on top of bar
+            // Add value label on top of the bar if space permits
             if (barHeight > 15) {
                 const valueText = document.createElementNS("http://www.w3.org/2000/svg", "text");
                 valueText.setAttribute("x", x + barWidth / 2);
@@ -545,6 +607,7 @@ class GraphQLProfileApp {
         const yAxisGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
         chartGroup.appendChild(yAxisGroup);
 
+        // Render Y-axis grid lines and labels
         const numYTicks = 5;
         for (let i = 0; i <= numYTicks; i++) {
             const val = Math.round((maxAmount / numYTicks) * i);
@@ -583,7 +646,7 @@ class GraphQLProfileApp {
         yAxisTitle.textContent = "Skill Level (%)";
         chartGroup.appendChild(yAxisTitle);
 
-        // Create gradient definition
+        // Define gradient for bar fill
         const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
         const skillGradient = document.createElementNS("http://www.w3.org/2000/svg", "linearGradient");
         skillGradient.setAttribute("id", "skillBarGradient");
