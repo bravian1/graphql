@@ -58,6 +58,9 @@ The application follows a simple flow:
 2.  Navigate to the project directory.
 3.  Open the `index.html` file in your web browser.
 
+### or
+Open `https://graphql-lime.vercel.app/` in your web browser
+
 ## Usage
 
 1.  Open the `index.html` file in your browser.
